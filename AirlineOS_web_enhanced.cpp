@@ -34,7 +34,7 @@ int main()
 
     sqlite3* db = nullptr;
     int dbResult = sqlite3_open_v2(
-        "C:\\AirlineOS_Submission\\AirlineOS.db",
+      "/app/AirlineOS.db",
         &db,
         SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_FULLMUTEX,
         nullptr);
