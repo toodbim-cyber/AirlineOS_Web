@@ -51,16 +51,97 @@ int main()
     {
         sqlite3_busy_timeout(db, 5000);
         sqlite3_exec(db, "PRAGMA foreign_keys = ON;", nullptr, nullptr, nullptr);
-        // Add seat support without deleting existing bookings.
+
+        // Create the database schema on first startup.
+        // This is essential on a fresh cloud container where AirlineOS.db does not exist yet.
+        const char* schemaSQL =
+            "CREATE TABLE IF NOT EXISTS Passengers ("
+            " id INTEGER PRIMARY KEY AUTOINCREMENT,"
+            " name TEXT NOT NULL,"
+            " phone TEXT NOT NULL,"
+            " passport TEXT NOT NULL UNIQUE"
+            ");"
+            "CREATE TABLE IF NOT EXISTS Flights ("
+            " id INTEGER PRIMARY KEY AUTOINCREMENT,"
+            " flight_number TEXT NOT NULL UNIQUE,"
+            " origin TEXT NOT NULL,"
+            " destination TEXT NOT NULL,"
+            " departure_time TEXT NOT NULL,"
+            " price REAL NOT NULL CHECK(price > 0),"
+            " seats_available INTEGER NOT NULL DEFAULT 0 CHECK(seats_available >= 0)"
+            ");"
+            "CREATE TABLE IF NOT EXISTS Bookings ("
+            " id INTEGER PRIMARY KEY AUTOINCREMENT,"
+            " passenger_id INTEGER NOT NULL,"
+            " flight_id INTEGER NOT NULL,"
+            " booking_date TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,"
+            " status TEXT NOT NULL DEFAULT 'Confirmed',"
+            " seat_number TEXT,"
+            " FOREIGN KEY(passenger_id) REFERENCES Passengers(id),"
+            " FOREIGN KEY(flight_id) REFERENCES Flights(id)"
+            ");";
+
+        char* schemaError = nullptr;
+        int schemaResult = sqlite3_exec(db, schemaSQL, nullptr, nullptr, &schemaError);
+        if (schemaResult != SQLITE_OK) {
+            std::cerr << "Database schema initialization failed: "
+                      << (schemaError ? schemaError : sqlite3_errmsg(db)) << std::endl;
+            if (schemaError) sqlite3_free(schemaError);
+            sqlite3_close(db);
+            return 1;
+        }
+        if (schemaError) sqlite3_free(schemaError);
+
+        // Add seat_number to older databases that were created before seat selection existed.
         char* migrationError = nullptr;
-        sqlite3_exec(db, "ALTER TABLE Bookings ADD COLUMN seat_number TEXT;", nullptr, nullptr, &migrationError);
-        if (migrationError) sqlite3_free(migrationError); // Duplicate column is expected after first run.
-        sqlite3_exec(db,
+        int migrationResult = sqlite3_exec(
+            db, "ALTER TABLE Bookings ADD COLUMN seat_number TEXT;",
+            nullptr, nullptr, &migrationError);
+        if (migrationResult != SQLITE_OK && migrationError) {
+            // SQLITE_ERROR with "duplicate column name" is expected on later startups.
+            std::string migrationMessage = migrationError;
+            if (migrationMessage.find("duplicate column name") == std::string::npos) {
+                std::cerr << "Database migration failed: " << migrationMessage << std::endl;
+                sqlite3_free(migrationError);
+                sqlite3_close(db);
+                return 1;
+            }
+        }
+        if (migrationError) sqlite3_free(migrationError);
+
+        const char* indexSQL =
             "CREATE UNIQUE INDEX IF NOT EXISTS UX_Bookings_Flight_Seat "
             "ON Bookings(flight_id, seat_number) "
-            "WHERE status='Confirmed' AND seat_number IS NOT NULL;",
-            nullptr, nullptr, nullptr);
-        std::cout << "SQLite database connected successfully!" << std::endl;
+            "WHERE status='Confirmed' AND seat_number IS NOT NULL;";
+        char* indexError = nullptr;
+        if (sqlite3_exec(db, indexSQL, nullptr, nullptr, &indexError) != SQLITE_OK) {
+            std::cerr << "Could not create seat index: "
+                      << (indexError ? indexError : sqlite3_errmsg(db)) << std::endl;
+            if (indexError) sqlite3_free(indexError);
+            sqlite3_close(db);
+            return 1;
+        }
+        if (indexError) sqlite3_free(indexError);
+
+        // Add sample flights only when they are not already present.
+        const char* seedSQL =
+            "INSERT OR IGNORE INTO Flights "
+            "(flight_number, origin, destination, departure_time, price, seats_available) VALUES "
+            "('F101','Baghdad','Erbil','2026-12-10 09:00',75,50),"
+            "('F102','Erbil','Baghdad','2026-12-11 12:00',80,45),"
+            "('F103','Baghdad','Istanbul','2026-12-12 15:00',250,60),"
+            "('F104','Erbil','Istanbul','2026-12-13 10:00',220,40);";
+        char* seedError = nullptr;
+        if (sqlite3_exec(db, seedSQL, nullptr, nullptr, &seedError) != SQLITE_OK) {
+            std::cerr << "Could not initialize sample flights: "
+                      << (seedError ? seedError : sqlite3_errmsg(db)) << std::endl;
+            if (seedError) sqlite3_free(seedError);
+            sqlite3_close(db);
+            return 1;
+        }
+        if (seedError) sqlite3_free(seedError);
+
+        std::cout << "SQLite database connected and initialized successfully!" << std::endl;
     }
 
     // AirlineOS Home Page
