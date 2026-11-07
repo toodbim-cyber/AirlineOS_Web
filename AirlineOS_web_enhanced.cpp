@@ -7,7 +7,8 @@
 #include <sstream>
 #include <mutex>
 #include <random>
-
+#include <cstdlib>
+#include <stdexcept>
 // Simple in-memory admin session for this local demo application.
 static std::mutex g_adminMutex;
 static std::string g_adminToken;
@@ -2274,7 +2275,9 @@ async function editFlight(flightId) {
         result["message"] = "Flight not found or has bookings";
         return crow::response(400, result);
             });
-    app.port(18080).run();
+    const char* portEnv = std::getenv("PORT");
+const int port = portEnv ? std::stoi(portEnv) : 8080;
+app.port(port).bindaddr("0.0.0.0").run();
 
     if (db) sqlite3_close(db);
     return 0;
